@@ -15,5 +15,8 @@ accepted, changed or rejected what it produced.
   fail on liquidity and the house stock is seeded.
 - **Accepted:** double-entry ledger, idempotency key written in the same transaction as the work,
   conditional `UPDATE … WHERE available >= ?` for debits, real MySQL in tests over H2.
+- **Changed: no `currency` table and no `allow_negative` column.** The AI planned both. I had
+  currencies hardcoded as a Java enum (they only change with a deploy anyway) and had "may go
+  negative" derived from the account type, so the rule lives in one place.
 - **Changed: Java version.** I asked for the latest release (27); the AI pushed back to 25 LTS
   because of tooling lag and reviewer setup. Accepted.

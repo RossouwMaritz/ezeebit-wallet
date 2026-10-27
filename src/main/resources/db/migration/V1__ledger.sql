@@ -1,17 +1,11 @@
-CREATE TABLE currency (
-    code  VARCHAR(8) PRIMARY KEY,
-    scale TINYINT    NOT NULL
-);
-
 -- One currency per account. owner is a merchant id, or 'platform' for house and external accounts.
+-- currency and type hold names from the Currency and AccountType enums.
 CREATE TABLE account (
-    id             BIGINT AUTO_INCREMENT PRIMARY KEY,
-    owner          VARCHAR(64) NOT NULL,
-    type           VARCHAR(16) NOT NULL,
-    currency       VARCHAR(8)  NOT NULL,
-    allow_negative BOOLEAN     NOT NULL,
-    UNIQUE KEY uq_account (owner, type, currency),
-    FOREIGN KEY (currency) REFERENCES currency (code)
+    id       BIGINT AUTO_INCREMENT PRIMARY KEY,
+    owner    VARCHAR(64) NOT NULL,
+    type     VARCHAR(16) NOT NULL,
+    currency VARCHAR(8)  NOT NULL,
+    UNIQUE KEY uq_account (owner, type, currency)
 );
 
 -- Cache of SUM(posting.amount) per account, updated in the same transaction as the postings.

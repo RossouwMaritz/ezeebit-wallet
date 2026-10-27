@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
+import com.ezeebit.wallet.Currency;
 import com.ezeebit.wallet.ErrorCode;
 import com.ezeebit.wallet.WalletException;
 
@@ -18,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class LedgerService {
 
-	private record Account(long id, String currency, int scale, boolean allowNegative) {
+	private record Account(long id, Currency currency, AccountType type) {
 	}
 
 	private final JdbcClient jdbc;
@@ -29,27 +30,26 @@ public class LedgerService {
 
 	/** Returns the account id, creating the account (balance 0) on first use. */
 	@Transactional
-	public long account(String owner, AccountType type, String currency) {
+	public long account(String owner, AccountType type, Currency currency) {
 		Optional<Long> existing = findAccount(owner, type, currency);
 		if (existing.isPresent()) {
 			return existing.get();
 		}
-		// Upsert, not INSERT IGNORE: IGNORE would also swallow the foreign key error for an unknown currency.
 		// LAST_INSERT_ID(id) hands back the id even when another transaction created the row after our
 		// snapshot was taken, which a plain re-SELECT under REPEATABLE READ would not see.
 		jdbc.sql("""
-				INSERT INTO account (owner, type, currency, allow_negative) VALUES (?, ?, ?, ?)
+				INSERT INTO account (owner, type, currency) VALUES (?, ?, ?)
 				ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)""")
-			.params(owner, type.name(), currency, type.allowNegative)
+			.params(owner, type.name(), currency.name())
 			.update();
 		long id = jdbc.sql("SELECT LAST_INSERT_ID()").query(Long.class).single();
 		jdbc.sql("INSERT IGNORE INTO account_balance (account_id, balance) VALUES (?, 0)").param(id).update();
 		return id;
 	}
 
-	private Optional<Long> findAccount(String owner, AccountType type, String currency) {
+	private Optional<Long> findAccount(String owner, AccountType type, Currency currency) {
 		return jdbc.sql("SELECT id FROM account WHERE owner = ? AND type = ? AND currency = ?")
-			.params(owner, type.name(), currency)
+			.params(owner, type.name(), currency.name())
 			.query(Long.class)
 			.optional();
 	}
@@ -62,17 +62,17 @@ public class LedgerService {
 	@Transactional
 	public long post(String type, String reference, List<Posting> postings) {
 		Map<Long, Account> accounts = loadAccounts(postings);
-		Map<String, BigDecimal> sums = new HashMap<>();
+		Map<Currency, BigDecimal> sums = new HashMap<>();
 		for (Posting p : postings) {
 			Account account = accounts.get(p.accountId());
 			if (account == null) {
 				throw new IllegalArgumentException("Unknown account " + p.accountId());
 			}
-			if (!account.currency().equals(p.currency())) {
+			if (account.currency() != p.currency()) {
 				throw new WalletException(ErrorCode.CURRENCY_MISMATCH,
 						"Account " + account.id() + " holds " + account.currency() + ", not " + p.currency());
 			}
-			if (p.amount().signum() == 0 || p.amount().stripTrailingZeros().scale() > account.scale()) {
+			if (p.amount().signum() == 0 || p.amount().stripTrailingZeros().scale() > account.currency().scale) {
 				throw new WalletException(ErrorCode.INVALID_AMOUNT,
 						p.amount().toPlainString() + " is not a valid " + p.currency() + " amount");
 			}
@@ -86,7 +86,7 @@ public class LedgerService {
 
 		// Lock balance rows in account id order so two entries touching the same accounts cannot deadlock.
 		postings.stream().sorted(Comparator.comparingLong(Posting::accountId)).forEach(p -> {
-			boolean guarded = p.amount().signum() < 0 && !accounts.get(p.accountId()).allowNegative();
+			boolean guarded = p.amount().signum() < 0 && !accounts.get(p.accountId()).type().allowNegative;
 			String sql = "UPDATE account_balance SET balance = balance + :amount WHERE account_id = :id"
 					+ (guarded ? " AND balance + :amount >= 0" : "");
 			int rows = jdbc.sql(sql).param("amount", p.amount()).param("id", p.accountId()).update();
@@ -111,12 +111,10 @@ public class LedgerService {
 			throw new IllegalArgumentException("An entry needs at least two postings");
 		}
 		Map<Long, Account> accounts = new HashMap<>();
-		jdbc.sql("""
-				SELECT a.id, a.currency, c.scale, a.allow_negative
-				FROM account a JOIN currency c ON c.code = a.currency
-				WHERE a.id IN (:ids)""")
+		jdbc.sql("SELECT id, currency, type FROM account WHERE id IN (:ids)")
 			.param("ids", postings.stream().map(Posting::accountId).distinct().toList())
-			.query((rs, i) -> new Account(rs.getLong(1), rs.getString(2), rs.getInt(3), rs.getBoolean(4)))
+			.query((rs, i) -> new Account(rs.getLong(1), Currency.valueOf(rs.getString(2)),
+					AccountType.valueOf(rs.getString(3))))
 			.list()
 			.forEach(a -> accounts.put(a.id(), a));
 		return accounts;
