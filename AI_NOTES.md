@@ -18,5 +18,10 @@ accepted, changed or rejected what it produced.
 - **Changed: no `currency` table and no `allow_negative` column.** The AI planned both. I had
   currencies hardcoded as a Java enum (they only change with a deploy anyway) and had "may go
   negative" derived from the account type, so the rule lives in one place.
+- **Changed: no generic idempotency table.** The AI planned and built an `idempotency_key` table
+  that stored each response. I questioned whether it was needed; we kept the standard
+  `Idempotency-Key` header for withdrawals but store it on the withdrawal row, and deposits and
+  conversions dedupe on their natural keys (external reference, quote id). Replays return the
+  current state instead of a stored copy.
 - **Changed: Java version.** I asked for the latest release (27); the AI pushed back to 25 LTS
   because of tooling lag and reviewer setup. Accepted.

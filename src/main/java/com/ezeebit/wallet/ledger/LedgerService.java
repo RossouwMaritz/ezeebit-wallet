@@ -1,6 +1,7 @@
 package com.ezeebit.wallet.ledger;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -18,6 +19,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class LedgerService {
+
+	/** Owner of the house and external accounts. */
+	public static final String PLATFORM = "platform";
 
 	private record Account(long id, Currency currency, AccountType type) {
 	}
@@ -72,7 +76,9 @@ public class LedgerService {
 				throw new WalletException(ErrorCode.CURRENCY_MISMATCH,
 						"Account " + account.id() + " holds " + account.currency() + ", not " + p.currency());
 			}
-			if (p.amount().signum() == 0 || p.amount().stripTrailingZeros().scale() > account.currency().scale) {
+			// DECIMAL(38,18) leaves 20 digits before the point.
+			if (p.amount().signum() == 0 || p.amount().stripTrailingZeros().scale() > account.currency().scale
+					|| p.amount().precision() - p.amount().scale() > 20) {
 				throw new WalletException(ErrorCode.INVALID_AMOUNT,
 						p.amount().toPlainString() + " is not a valid " + p.currency() + " amount");
 			}
@@ -106,12 +112,58 @@ public class LedgerService {
 		return entryId;
 	}
 
+	public record Balance(Currency currency, BigDecimal available, BigDecimal held) {
+	}
+
+	public record Entry(long entryId, String type, String reference, AccountType account, BigDecimal amount,
+			Instant createdAt) {
+	}
+
+	/** Available and held per currency the owner has used. */
+	public List<Balance> balances(String owner) {
+		return jdbc.sql("""
+				SELECT a.currency,
+				       SUM(IF(a.type = 'AVAILABLE', b.balance, 0)),
+				       SUM(IF(a.type = 'HELD', b.balance, 0))
+				FROM account a JOIN account_balance b ON b.account_id = a.id
+				WHERE a.owner = ?
+				GROUP BY a.currency
+				ORDER BY a.currency""")
+			.param(owner)
+			.query((rs, i) -> {
+				Currency currency = Currency.valueOf(rs.getString(1));
+				return new Balance(currency, rs.getBigDecimal(2).setScale(currency.scale),
+						rs.getBigDecimal(3).setScale(currency.scale));
+			})
+			.list();
+	}
+
+	/** Postings on the owner's accounts in one currency, newest first. */
+	public List<Entry> entries(String owner, Currency currency) {
+		// shortcut: newest 100 only, add a cursor (?before=<posting id>) when merchants need full history.
+		return jdbc.sql("""
+				SELECT e.id, e.type, e.reference, a.type, p.amount, e.created_at
+				FROM posting p
+				JOIN account a ON a.id = p.account_id
+				JOIN journal_entry e ON e.id = p.entry_id
+				WHERE a.owner = ? AND a.currency = ?
+				ORDER BY p.id DESC
+				LIMIT 100""")
+			.params(owner, currency.name())
+			.query((rs, i) -> new Entry(rs.getLong(1), rs.getString(2), rs.getString(3),
+					AccountType.valueOf(rs.getString(4)), rs.getBigDecimal(5).setScale(currency.scale),
+					rs.getTimestamp(6).toInstant()))
+			.list();
+	}
+
 	private Map<Long, Account> loadAccounts(List<Posting> postings) {
 		if (postings.size() < 2) {
 			throw new IllegalArgumentException("An entry needs at least two postings");
 		}
 		Map<Long, Account> accounts = new HashMap<>();
-		jdbc.sql("SELECT id, currency, type FROM account WHERE id IN (:ids)")
+		// Locking read: account() may have returned an id committed after this transaction's snapshot.
+		// The posting inserts take the same shared locks for their foreign key checks anyway.
+		jdbc.sql("SELECT id, currency, type FROM account WHERE id IN (:ids) FOR SHARE")
 			.param("ids", postings.stream().map(Posting::accountId).distinct().toList())
 			.query((rs, i) -> new Account(rs.getLong(1), Currency.valueOf(rs.getString(2)),
 					AccountType.valueOf(rs.getString(3))))
