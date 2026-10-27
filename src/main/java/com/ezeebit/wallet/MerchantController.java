@@ -8,17 +8,24 @@ import com.ezeebit.wallet.deposit.DepositService.DepositRequest;
 import com.ezeebit.wallet.ledger.LedgerService;
 import com.ezeebit.wallet.ledger.LedgerService.Balance;
 import com.ezeebit.wallet.ledger.LedgerService.Entry;
+import com.ezeebit.wallet.withdrawal.WithdrawalService;
+import com.ezeebit.wallet.withdrawal.WithdrawalService.Withdrawal;
+import com.ezeebit.wallet.withdrawal.WithdrawalService.WithdrawalRequest;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 @RestController
 @RequestMapping("/merchants/{merchantId}")
@@ -31,9 +38,12 @@ class MerchantController {
 
 	private final LedgerService ledger;
 
-	MerchantController(DepositService deposits, LedgerService ledger) {
+	private final WithdrawalService withdrawals;
+
+	MerchantController(DepositService deposits, LedgerService ledger, WithdrawalService withdrawals) {
 		this.deposits = deposits;
 		this.ledger = ledger;
+		this.withdrawals = withdrawals;
 	}
 
 	@PostMapping("/deposits")
@@ -51,6 +61,20 @@ class MerchantController {
 	@GetMapping("/accounts/{currency}/entries")
 	List<Entry> entries(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @PathVariable Currency currency) {
 		return ledger.entries(merchantId, currency);
+	}
+
+	/** 202: the money is held, but the payout itself finishes later. Poll the GET for the outcome. */
+	@PostMapping("/withdrawals")
+	@ResponseStatus(HttpStatus.ACCEPTED)
+	Withdrawal withdraw(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId,
+			@RequestHeader("Idempotency-Key") @NotBlank @Size(max = 64) String idempotencyKey,
+			@Valid @RequestBody WithdrawalRequest request) {
+		return withdrawals.withdraw(merchantId, idempotencyKey, request);
+	}
+
+	@GetMapping("/withdrawals/{withdrawalId}")
+	Withdrawal withdrawal(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @PathVariable long withdrawalId) {
+		return withdrawals.find(merchantId, withdrawalId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 	}
 
 }

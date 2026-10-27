@@ -76,12 +76,7 @@ public class LedgerService {
 				throw new WalletException(ErrorCode.CURRENCY_MISMATCH,
 						"Account " + account.id() + " holds " + account.currency() + ", not " + p.currency());
 			}
-			// DECIMAL(38,18) leaves 20 digits before the point.
-			if (p.amount().signum() == 0 || p.amount().stripTrailingZeros().scale() > account.currency().scale
-					|| p.amount().precision() - p.amount().scale() > 20) {
-				throw new WalletException(ErrorCode.INVALID_AMOUNT,
-						p.amount().toPlainString() + " is not a valid " + p.currency() + " amount");
-			}
+			requireValidAmount(p.currency(), p.amount());
 			sums.merge(p.currency(), p.amount(), BigDecimal::add);
 		}
 		sums.forEach((currency, sum) -> {
@@ -110,6 +105,15 @@ public class LedgerService {
 				.update();
 		}
 		return entryId;
+	}
+
+	/** Non-zero, no finer than the currency allows, and fits DECIMAL(38,18) (20 digits before the point). */
+	public static void requireValidAmount(Currency currency, BigDecimal amount) {
+		if (amount.signum() == 0 || amount.stripTrailingZeros().scale() > currency.scale
+				|| amount.precision() - amount.scale() > 20) {
+			throw new WalletException(ErrorCode.INVALID_AMOUNT,
+					amount.toPlainString() + " is not a valid " + currency + " amount");
+		}
 	}
 
 	public record Balance(Currency currency, BigDecimal available, BigDecimal held) {
