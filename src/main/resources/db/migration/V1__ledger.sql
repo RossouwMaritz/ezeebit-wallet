@@ -1,3 +1,7 @@
+-- Compare text exactly. The default (utf8mb4_0900_ai_ci) treats 'TX9a' and 'TX9A' as the same reference
+-- and the same merchant; utf8mb4_bin would still treat 'TX9' and 'TX9 ' as equal.
+ALTER DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin;
+
 -- One currency per account. owner is a merchant id, or 'platform' for house and external accounts.
 -- currency and type hold names from the Currency and AccountType enums.
 CREATE TABLE account (

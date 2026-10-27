@@ -75,6 +75,17 @@ class DepositApiTests {
 	}
 
 	@Test
+	void referencesThatDifferOnlyInCaseAreDifferentDeposits() throws Exception {
+		for (String ref : List.of(reference + "-a", reference + "-A")) {
+			mvc.perform(post("/merchants/{id}/deposits", merchant).contentType(MediaType.APPLICATION_JSON)
+				.content("""
+						{"currency": "ZAR", "amount": 10, "reference": "%s"}""".formatted(ref)))
+				.andExpect(status().isCreated());
+		}
+		mvc.perform(get("/merchants/{id}/balances", merchant)).andExpect(jsonPath("$[0].available").value(20));
+	}
+
+	@Test
 	void concurrentReplaysAreBookedOnce() throws Exception {
 		List<Callable<Integer>> calls = new ArrayList<>();
 		for (int i = 0; i < 10; i++) {
