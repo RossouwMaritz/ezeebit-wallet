@@ -62,6 +62,7 @@ JPA). I wanted the locking and the SQL to be visible, because that's where the c
 ## Run it
 
 You need JDK 25 or newer, and Docker. Tests and local runs start MySQL 8.4 in a container for you.
+The curl examples also use [jq](https://jqlang.org) to pick the quote id out of the response.
 
 ```bash
 ./mvnw test                   # 28 tests, all against real MySQL
@@ -78,11 +79,10 @@ curl -s -X POST localhost:8089/merchants/m-1/deposits -H 'Content-Type: applicat
 curl -s localhost:8089/merchants/m-1/balances
 
 # Quote selling 500 ZAR for USDT (good for 30 seconds), then execute it.
-QUOTE=$(curl -s -X POST localhost:8089/merchants/m-1/quotes -H 'Content-Type: application/json' \
-  -d '{"sellCurrency": "ZAR", "buyCurrency": "USDT", "sellAmount": 500}')
-echo "$QUOTE"
+QUOTE_ID=$(curl -s -X POST localhost:8089/merchants/m-1/quotes -H 'Content-Type: application/json' \
+  -d '{"sellCurrency": "ZAR", "buyCurrency": "USDT", "sellAmount": 500}' | jq -r .id)
 curl -s -X POST localhost:8089/merchants/m-1/conversions -H 'Content-Type: application/json' \
-  -d "{\"quoteId\": \"$(echo "$QUOTE" | sed 's/.*"id":"\([^"]*\)".*/\1/')\"}"
+  -d "{\"quoteId\": \"$QUOTE_ID\"}"
 
 # Withdraw 100 ZAR to a bank account. Sending the same Idempotency-Key again returns the same withdrawal.
 curl -s -X POST localhost:8089/merchants/m-1/withdrawals -H 'Content-Type: application/json' \
