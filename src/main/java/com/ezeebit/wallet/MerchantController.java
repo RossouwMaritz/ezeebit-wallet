@@ -82,7 +82,7 @@ class MerchantController {
 	}
 
 	@GetMapping("/withdrawals/{withdrawalId}")
-	Withdrawal withdrawal(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @PathVariable long withdrawalId) {
+	Withdrawal withdrawal(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @PathVariable String withdrawalId) {
 		return withdrawals.find(merchantId, withdrawalId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 	}
 

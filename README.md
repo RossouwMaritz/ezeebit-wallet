@@ -85,12 +85,12 @@ curl -s -X POST localhost:8089/merchants/m-1/conversions -H 'Content-Type: appli
   -d "{\"quoteId\": \"$QUOTE_ID\"}"
 
 # Withdraw 100 ZAR to a bank account. Sending the same Idempotency-Key again returns the same withdrawal.
-curl -s -X POST localhost:8089/merchants/m-1/withdrawals -H 'Content-Type: application/json' \
+WITHDRAWAL_ID=$(curl -s -X POST localhost:8089/merchants/m-1/withdrawals -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: payout-1' \
   -d '{"currency": "ZAR", "amount": 100,
-       "destination": {"type": "BANK", "accountNumber": "62000000001", "bankCode": "250655"}}'
+       "destination": {"type": "BANK", "accountNumber": "62000000001", "bankCode": "250655"}}' | jq -r .id)
 
-curl -s localhost:8089/merchants/m-1/withdrawals/1
+curl -s localhost:8089/merchants/m-1/withdrawals/$WITHDRAWAL_ID
 
 # Every posting on the merchant's ZAR accounts, newest first.
 curl -s localhost:8089/merchants/m-1/accounts/ZAR/entries
@@ -196,6 +196,19 @@ drag a finished withdrawal backwards.
 
 The destination has to fit the currency. Fiat goes to `{type: BANK, accountNumber, bankCode}` and
 stablecoins go to `{type: CHAIN, network, address}`. Anything else is a 400 `INVALID_DESTINATION`.
+
+A withdrawal's id is a random UUID, not the database's auto-increment number. It's what the API
+returns, what the audit trail uses as the reference, and what we send the rail as its idempotency
+key. A counting number would be a problem in three ways:
+
+1. **It could collide at the rail.** If our database were ever rebuilt, or two environments shared a
+   rail sandbox, a new withdrawal 1 would look like the old one, and the rail could drop a real payout
+   as a duplicate.
+2. **It leaks volume.** Two withdrawals a day apart would tell anyone how many we processed in between.
+3. **It's guessable.** Lookups are scoped to the merchant, so guessing returns a 404, but a random id
+   means one missed check doesn't expose anything.
+
+The auto-increment id stays as the primary key, because InnoDB inserts sequential keys faster.
 
 ## Conversions
 
@@ -364,7 +377,10 @@ Most important first:
    from a queue.
 7. **Pricing.** A margin per pair and per merchant, a separate revenue account for it, and the last
    good rate in a shared store. It's in memory now, so it resets on restart.
-8. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
+8. **Public ids for journal entries.** `entryId` in the deposit and conversion responses and the
+   entries endpoint is still the database's auto-increment number, so it leaks volume the same way.
+   It should get a random public id like withdrawals have. Quotes already use one.
+9. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
    alerts on `UNKNOWN` withdrawals and `RATE_UNAVAILABLE`, and a merchant table with limits.
 
 ## Tests

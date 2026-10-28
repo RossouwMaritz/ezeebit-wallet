@@ -22,7 +22,7 @@ public class FakePayoutRail implements PayoutRail {
 
 	private final Queue<Outcome> script = new ConcurrentLinkedQueue<>();
 
-	private final Queue<Long> submitted = new ConcurrentLinkedQueue<>();
+	private final Queue<String> submitted = new ConcurrentLinkedQueue<>();
 
 	/** The next submits get these outcomes, in order; after that, ACCEPT. */
 	public void script(Outcome... outcomes) {
@@ -30,12 +30,12 @@ public class FakePayoutRail implements PayoutRail {
 	}
 
 	/** Withdrawal ids submitted so far, in order. */
-	public List<Long> submitted() {
+	public List<String> submitted() {
 		return List.copyOf(submitted);
 	}
 
 	@Override
-	public void submit(long withdrawalId, Currency currency, BigDecimal amount, Destination destination) {
+	public void submit(String withdrawalId, Currency currency, BigDecimal amount, Destination destination) {
 		submitted.add(withdrawalId);
 		Outcome outcome = script.poll();
 		if (outcome == Outcome.REJECT) {

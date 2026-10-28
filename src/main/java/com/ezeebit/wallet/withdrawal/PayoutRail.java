@@ -13,7 +13,7 @@ public interface PayoutRail {
 	 * Any other exception (timeout, connection reset) means we do not know whether it was sent.
 	 * {@code withdrawalId} is the rail's idempotency key, so resubmitting never pays twice.
 	 */
-	void submit(long withdrawalId, Currency currency, BigDecimal amount, Destination destination);
+	void submit(String withdrawalId, Currency currency, BigDecimal amount, Destination destination);
 
 	class Rejected extends RuntimeException {
 

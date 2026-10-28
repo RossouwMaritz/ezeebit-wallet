@@ -88,7 +88,7 @@ class WithdrawalApiTests {
 
 	@Test
 	void successfulPayoutSettlesOnceHoweverOftenTheRailSaysSo() throws Exception {
-		long id = id(withdraw(key(), "40", BANK).andExpect(status().isAccepted())
+		String id = id(withdraw(key(), "40", BANK).andExpect(status().isAccepted())
 			.andExpect(jsonPath("$.state").value("SUBMITTED")));
 		assertBalance("60", "40");
 
@@ -103,7 +103,7 @@ class WithdrawalApiTests {
 
 	@Test
 	void failedPayoutReleasesTheHoldOnce() throws Exception {
-		long id = id(withdraw(key(), "40", BANK));
+		String id = id(withdraw(key(), "40", BANK));
 
 		withdrawals.onPayoutResult(id, false);
 		withdrawals.onPayoutResult(id, false);
@@ -127,7 +127,7 @@ class WithdrawalApiTests {
 	void railTimeoutKeepsFundsHeldUntilTheResultArrives() throws Exception {
 		rail.script(Outcome.TIMEOUT);
 
-		long id = id(withdraw(key(), "40", BANK).andExpect(jsonPath("$.state").value("UNKNOWN")));
+		String id = id(withdraw(key(), "40", BANK).andExpect(jsonPath("$.state").value("UNKNOWN")));
 		assertBalance("60", "40");
 
 		withdrawals.onPayoutResult(id, true);
@@ -138,7 +138,7 @@ class WithdrawalApiTests {
 	@Test
 	void replayReturnsTheSameWithdrawalAndSubmitsOnce() throws Exception {
 		String key = key();
-		long id = id(withdraw(key, "40", BANK));
+		String id = id(withdraw(key, "40", BANK));
 
 		assertThat(id(withdraw(key, "40.00", BANK).andExpect(status().isAccepted()))).isEqualTo(id);
 		withdraw(key, "41", BANK).andExpect(status().isConflict())
@@ -172,8 +172,12 @@ class WithdrawalApiTests {
 			.content(body("10", BANK))).andExpect(status().isBadRequest());
 		assertBalance("100", "0");
 
-		long id = id(withdraw(key(), "10", BANK));
+		String id = id(withdraw(key(), "10", BANK));
+		// The API only ever shows the random public id, never the database's sequential one.
+		assertThat(UUID.fromString(id)).isNotNull();
+		assertThat(entries(id)).containsExactly("HOLD");
 		mvc.perform(get("/merchants/{id}/withdrawals/{wid}", merchant, id)).andExpect(status().isOk());
+		mvc.perform(get("/merchants/{id}/withdrawals/{wid}", merchant, "1")).andExpect(status().isNotFound());
 		mvc.perform(get("/merchants/{id}/withdrawals/{wid}", "someone-else", id)).andExpect(status().isNotFound());
 	}
 
@@ -188,11 +192,11 @@ class WithdrawalApiTests {
 				{"currency": "ZAR", "amount": %s, "destination": %s}""".formatted(amount, destination);
 	}
 
-	private static long id(ResultActions result) throws Exception {
-		return JsonPath.<Number>read(result.andReturn().getResponse().getContentAsString(), "$.id").longValue();
+	private static String id(ResultActions result) throws Exception {
+		return JsonPath.read(result.andReturn().getResponse().getContentAsString(), "$.id");
 	}
 
-	private void assertState(long id, String state) throws Exception {
+	private void assertState(String id, String state) throws Exception {
 		mvc.perform(get("/merchants/{id}/withdrawals/{wid}", merchant, id)).andExpect(jsonPath("$.state").value(state));
 	}
 
@@ -202,8 +206,8 @@ class WithdrawalApiTests {
 		assertThat(zar.held()).isEqualByComparingTo(new BigDecimal(held));
 	}
 
-	private List<String> entries(long id) {
-		return jdbc.sql("SELECT type FROM journal_entry WHERE reference = ?").param(String.valueOf(id)).query(String.class).list();
+	private List<String> entries(String id) {
+		return jdbc.sql("SELECT type FROM journal_entry WHERE reference = ?").param(id).query(String.class).list();
 	}
 
 	private static String key() {
