@@ -70,7 +70,9 @@ class ConversionApiTests {
 		assertThat(expiresAt).isBetween(Instant.now().plusSeconds(25), Instant.now().plusSeconds(35));
 		quoteId = JsonPath.read(quoteId, "$.id");
 
-		long entryId = entryId(convert(quoteId).andExpect(status().isCreated()));
+		String conversion = convert(quoteId).andExpect(status().isCreated())
+			.andExpect(jsonPath("$.entryId").doesNotExist())
+			.andReturn().getResponse().getContentAsString();
 		assertBalance("ZAR", "0");
 		assertBalance("USDT", "54.725");
 		assertThat(house("ZAR")).isEqualByComparingTo(houseZar.add(new BigDecimal("1000")));
@@ -78,7 +80,9 @@ class ConversionApiTests {
 
 		// A replay, even after expiry, returns the same conversion and moves nothing.
 		expire(quoteId);
-		assertThat(entryId(convert(quoteId).andExpect(status().isCreated()))).isEqualTo(entryId);
+		assertThat(convert(quoteId).andExpect(status().isCreated()).andReturn().getResponse().getContentAsString())
+			.isEqualTo(conversion);
+		assertThat(conversionEntries(quoteId)).isEqualTo(1);
 		assertBalance("ZAR", "0");
 		assertBalance("USDT", "54.725");
 	}
@@ -189,10 +193,6 @@ class ConversionApiTests {
 	private static String conversionBody(String quoteId) {
 		return """
 				{"quoteId": "%s"}""".formatted(quoteId);
-	}
-
-	private static long entryId(ResultActions result) throws Exception {
-		return JsonPath.<Number>read(result.andReturn().getResponse().getContentAsString(), "$.entryId").longValue();
 	}
 
 	private void expire(String quoteId) {

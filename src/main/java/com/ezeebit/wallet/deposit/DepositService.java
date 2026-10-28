@@ -32,7 +32,7 @@ public class DepositService {
 			@NotBlank @Size(max = 63) String reference) {
 	}
 
-	public record Deposit(long entryId, Currency currency, BigDecimal amount, String reference) {
+	public record Deposit(Currency currency, BigDecimal amount, String reference) {
 	}
 
 	private final LedgerService ledger;
@@ -63,27 +63,27 @@ public class DepositService {
 		Currency currency = request.currency();
 		long available = ledger.account(merchantId, AccountType.AVAILABLE, currency);
 		long depositsIn = ledger.account(LedgerService.PLATFORM, AccountType.DEPOSITS_IN, currency);
-		long entryId = ledger.post("DEPOSIT", reference, List.of(new Posting(available, currency, request.amount()),
+		ledger.post("DEPOSIT", reference, List.of(new Posting(available, currency, request.amount()),
 				new Posting(depositsIn, currency, request.amount().negate())));
-		return new Deposit(entryId, currency, request.amount().setScale(currency.scale), request.reference());
+		return new Deposit(currency, request.amount().setScale(currency.scale), request.reference());
 	}
 
 	private Optional<Deposit> existing(String reference, DepositRequest request) {
 		return jdbc.sql("""
-				SELECT e.id, a.currency, p.amount
+				SELECT a.currency, p.amount
 				FROM journal_entry e
 				JOIN posting p ON p.entry_id = e.id
 				JOIN account a ON a.id = p.account_id
 				WHERE e.type = 'DEPOSIT' AND e.reference = ? AND a.type = 'AVAILABLE'""")
 			.param(reference)
 			.query((rs, i) -> {
-				Currency currency = Currency.valueOf(rs.getString(2));
-				BigDecimal amount = rs.getBigDecimal(3).setScale(currency.scale);
+				Currency currency = Currency.valueOf(rs.getString(1));
+				BigDecimal amount = rs.getBigDecimal(2).setScale(currency.scale);
 				if (currency != request.currency() || amount.compareTo(request.amount()) != 0) {
 					throw new WalletException(ErrorCode.IDEMPOTENCY_CONFLICT, "Deposit " + request.reference()
 							+ " is already booked as " + amount.toPlainString() + " " + currency);
 				}
-				return new Deposit(rs.getLong(1), currency, amount, request.reference());
+				return new Deposit(currency, amount, request.reference());
 			})
 			.optional();
 	}

@@ -44,6 +44,7 @@ class DepositApiTests {
 	void replayedDepositIsBookedOnce() throws Exception {
 		String first = deposit("ZAR", "100.5").andExpect(status().isCreated())
 			.andExpect(jsonPath("$.amount").value(100.50))
+			.andExpect(jsonPath("$.entryId").doesNotExist())
 			.andReturn().getResponse().getContentAsString();
 		String replay = deposit("ZAR", "100.50").andExpect(status().isCreated())
 			.andReturn().getResponse().getContentAsString();
@@ -59,6 +60,8 @@ class DepositApiTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].type").value("DEPOSIT"))
+			.andExpect(jsonPath("$[0].reference").value(merchant + "/" + reference))
+			.andExpect(jsonPath("$[0].entryId").doesNotExist())
 			.andExpect(jsonPath("$[0].account").value("AVAILABLE"))
 			.andExpect(jsonPath("$[0].amount").value(100.50));
 	}

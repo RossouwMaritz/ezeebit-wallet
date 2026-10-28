@@ -210,6 +210,11 @@ key. A counting number would be a problem in three ways:
 
 The auto-increment id stays as the primary key, because InnoDB inserts sequential keys faster.
 
+The same goes for the rest of the API: no database number is ever shown. Quotes have random ids too.
+Ledger entries are identified by their type and reference, which are unique together: a deposit by
+the reference the merchant sent, a conversion by its quote id, and a hold, payout or release by its
+withdrawal id.
+
 ## Conversions
 
 ```mermaid
@@ -377,10 +382,7 @@ Most important first:
    from a queue.
 7. **Pricing.** A margin per pair and per merchant, a separate revenue account for it, and the last
    good rate in a shared store. It's in memory now, so it resets on restart.
-8. **Public ids for journal entries.** `entryId` in the deposit and conversion responses and the
-   entries endpoint is still the database's auto-increment number, so it leaks volume the same way.
-   It should get a random public id like withdrawals have. Quotes already use one.
-9. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
+8. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
    alerts on `UNKNOWN` withdrawals and `RATE_UNAVAILABLE`, and a merchant table with limits.
 
 ## Tests
