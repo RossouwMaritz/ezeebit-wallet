@@ -8,6 +8,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -49,7 +50,9 @@ class DepositApiTests {
 		String replay = deposit("ZAR", "100.50").andExpect(status().isCreated())
 			.andReturn().getResponse().getContentAsString();
 
+		// Same response, same random id.
 		assertThat(replay).isEqualTo(first);
+		assertThat(UUID.fromString(JsonPath.read(first, "$.id"))).isNotNull();
 		assertThat(depositEntries()).isEqualTo(1);
 		mvc.perform(get("/merchants/{id}/balances", merchant))
 			.andExpect(status().isOk())

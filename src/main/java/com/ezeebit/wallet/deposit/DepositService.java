@@ -32,7 +32,8 @@ public class DepositService {
 			@NotBlank @Size(max = 63) String reference) {
 	}
 
-	public record Deposit(Currency currency, BigDecimal amount, String reference) {
+	/** {@code id} is the ledger entry's random public id, so a deposit can be looked up later. */
+	public record Deposit(String id, Currency currency, BigDecimal amount, String reference) {
 	}
 
 	private final LedgerService ledger;
@@ -65,25 +66,26 @@ public class DepositService {
 		long depositsIn = ledger.account(LedgerService.PLATFORM, AccountType.DEPOSITS_IN, currency);
 		ledger.post("DEPOSIT", reference, List.of(new Posting(available, currency, request.amount()),
 				new Posting(depositsIn, currency, request.amount().negate())));
-		return new Deposit(currency, request.amount().setScale(currency.scale), request.reference());
+		// Read back the way a replay does, so both return the same response.
+		return existing(reference, request).orElseThrow();
 	}
 
 	private Optional<Deposit> existing(String reference, DepositRequest request) {
 		return jdbc.sql("""
-				SELECT a.currency, p.amount
+				SELECT e.public_id, a.currency, p.amount
 				FROM journal_entry e
 				JOIN posting p ON p.entry_id = e.id
 				JOIN account a ON a.id = p.account_id
 				WHERE e.type = 'DEPOSIT' AND e.reference = ? AND a.type = 'AVAILABLE'""")
 			.param(reference)
 			.query((rs, i) -> {
-				Currency currency = Currency.valueOf(rs.getString(1));
-				BigDecimal amount = rs.getBigDecimal(2).setScale(currency.scale);
+				Currency currency = Currency.valueOf(rs.getString(2));
+				BigDecimal amount = rs.getBigDecimal(3).setScale(currency.scale);
 				if (currency != request.currency() || amount.compareTo(request.amount()) != 0) {
 					throw new WalletException(ErrorCode.IDEMPOTENCY_CONFLICT, "Deposit " + request.reference()
 							+ " is already booked as " + amount.toPlainString() + " " + currency);
 				}
-				return new Deposit(currency, amount, request.reference());
+				return new Deposit(rs.getString(1), currency, amount, request.reference());
 			})
 			.optional();
 	}

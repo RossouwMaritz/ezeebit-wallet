@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.ezeebit.wallet.Currency;
 import com.ezeebit.wallet.ErrorCode;
@@ -97,7 +98,9 @@ public class LedgerService {
 		});
 
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
-		jdbc.sql("INSERT INTO journal_entry (type, reference) VALUES (?, ?)").params(type, reference).update(key);
+		jdbc.sql("INSERT INTO journal_entry (public_id, type, reference) VALUES (?, ?, ?)")
+			.params(UUID.randomUUID().toString(), type, reference)
+			.update(key);
 		long entryId = key.getKey().longValue();
 		for (Posting p : postings) {
 			jdbc.sql("INSERT INTO posting (entry_id, account_id, amount) VALUES (?, ?, ?)")

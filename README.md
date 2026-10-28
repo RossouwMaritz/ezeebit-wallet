@@ -48,7 +48,7 @@ The endpoints:
 
 | Endpoint | What it does |
 |---|---|
-| `POST /merchants/{id}/deposits` | Money arrives. Stands in for the real bank or chain flow. `reference` dedupes. |
+| `POST /merchants/{id}/deposits` | Money arrives. Stands in for the real bank or chain flow. `reference` dedupes. Returns a random `id`. |
 | `GET /merchants/{id}/balances` | Available and held, per currency. |
 | `GET /merchants/{id}/accounts/{ccy}/entries` | The audit trail: every posting in that currency, newest first. |
 | `POST /merchants/{id}/quotes` | A price for selling an amount of one currency for another, good for 30 seconds. |
@@ -210,10 +210,11 @@ key. A counting number would be a problem in three ways:
 
 The auto-increment id stays as the primary key, because InnoDB inserts sequential keys faster.
 
-The same goes for the rest of the API: no database number is ever shown. Quotes have random ids too.
-Ledger entries are identified by their type and reference, which are unique together: a deposit by
-the reference the merchant sent, a conversion by its quote id, and a hold, payout or release by its
-withdrawal id.
+The same goes for the rest of the API: no database number is ever shown. Quotes have random ids
+too, and so does every ledger entry. A deposit returns its entry's random id as `id`, so we can add
+`GET /deposits/{id}` later without changing the API. In the audit trail, entries are labelled by their
+type and reference, which are unique together: a deposit by the reference the merchant sent, a
+conversion by its quote id, and a hold, payout or release by its withdrawal id.
 
 ## Conversions
 
