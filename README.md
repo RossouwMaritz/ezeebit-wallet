@@ -341,17 +341,30 @@ Most important first:
    `UNKNOWN` (timeout) keeps its money held until a person looks. A sweeper should resubmit the
    `REQUESTED` ones, which is safe because the rail dedupes on our id, and ask the rail about the
    `UNKNOWN` ones.
-2. **A webhook endpoint for rail results,** with signature checks and replay protection.
-3. **Reconciliation.** A daily job that rebuilds every balance from its postings and checks
+2. **Authentication.** Today anyone who can reach the API can act as any merchant by putting their id
+   in the URL. The code only checks the id's format, keeps `platform` out of reach, and scopes lookups
+   so merchant A's withdrawal is a 404 for merchant B. I'd add:
+   - **An API key or OAuth token per merchant,** checked at the gateway or with Spring Security.
+   - **The merchant id from the token, not the URL.** Either drop `{id}` from the path or reject a
+     request where they don't match. This one matters most, because the ledger trusts whatever
+     merchant id it's given.
+   - **Extra checks for withdrawals,** the riskiest action: a second factor or an allowlist of payout
+     destinations.
+
+   None of this touches the ledger or the services. It sits in front of the controller.
+3. **A webhook endpoint for rail results,** with signature checks and replay protection. Without a
+   signature, anyone could fake a "payout failed" and get the money released. Chain notifications in
+   task 4 need the same.
+4. **Reconciliation.** A daily job that rebuilds every balance from its postings and checks
    `PAYOUTS_OUT` and `DEPOSITS_IN` against bank and chain statements.
-4. **Managing the house FX stock.** Alerts when it runs low, plus rebalancing and hedging. Right now it
+5. **Managing the house FX stock.** Alerts when it runs low, plus rebalancing and hedging. Right now it
    only moves when merchants convert.
-5. **Hot rows.** Every conversion in a currency locks that currency's one house `FX` row. On payday
+6. **Hot rows.** Every conversion in a currency locks that currency's one house `FX` row. On payday
    that row becomes a queue. We could split it into several sub-accounts, or book the house side
    from a queue.
-6. **Pricing.** A margin per pair and per merchant, a separate revenue account for it, and the last
+7. **Pricing.** A margin per pair and per merchant, a separate revenue account for it, and the last
    good rate in a shared store. It's in memory now, so it resets on restart.
-7. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
+8. **Smaller things.** Paging for entries (it's the newest 100 for now), "buy exactly X" quotes,
    alerts on `UNKNOWN` withdrawals and `RATE_UNAVAILABLE`, and a merchant table with limits.
 
 ## Tests
