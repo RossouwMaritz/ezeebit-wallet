@@ -65,35 +65,35 @@ You need JDK 25 or newer, and Docker. Tests and local runs start MySQL 8.4 in a 
 
 ```bash
 ./mvnw test                   # 28 tests, all against real MySQL
-./mvnw spring-boot:test-run   # the app on http://localhost:8080, with a throwaway database
+./mvnw spring-boot:test-run   # the app on http://localhost:8089, with a throwaway database
 ```
 
 Then try it:
 
 ```bash
 # Money arrives. Sending the same reference again returns the same deposit.
-curl -s -X POST localhost:8080/merchants/m-1/deposits -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8089/merchants/m-1/deposits -H 'Content-Type: application/json' \
   -d '{"currency": "ZAR", "amount": 1000, "reference": "bank-tx-1"}'
 
-curl -s localhost:8080/merchants/m-1/balances
+curl -s localhost:8089/merchants/m-1/balances
 
 # Quote selling 500 ZAR for USDT (good for 30 seconds), then execute it.
-QUOTE=$(curl -s -X POST localhost:8080/merchants/m-1/quotes -H 'Content-Type: application/json' \
+QUOTE=$(curl -s -X POST localhost:8089/merchants/m-1/quotes -H 'Content-Type: application/json' \
   -d '{"sellCurrency": "ZAR", "buyCurrency": "USDT", "sellAmount": 500}')
 echo "$QUOTE"
-curl -s -X POST localhost:8080/merchants/m-1/conversions -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8089/merchants/m-1/conversions -H 'Content-Type: application/json' \
   -d "{\"quoteId\": \"$(echo "$QUOTE" | sed 's/.*"id":"\([^"]*\)".*/\1/')\"}"
 
 # Withdraw 100 ZAR to a bank account. Sending the same Idempotency-Key again returns the same withdrawal.
-curl -s -X POST localhost:8080/merchants/m-1/withdrawals -H 'Content-Type: application/json' \
+curl -s -X POST localhost:8089/merchants/m-1/withdrawals -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: payout-1' \
   -d '{"currency": "ZAR", "amount": 100,
        "destination": {"type": "BANK", "accountNumber": "62000000001", "bankCode": "250655"}}'
 
-curl -s localhost:8080/merchants/m-1/withdrawals/1
+curl -s localhost:8089/merchants/m-1/withdrawals/1
 
 # Every posting on the merchant's ZAR accounts, newest first.
-curl -s localhost:8080/merchants/m-1/accounts/ZAR/entries
+curl -s localhost:8089/merchants/m-1/accounts/ZAR/entries
 ```
 
 The rate feed and payout rail are in-process fakes. Locally the fake rail accepts every withdrawal but
