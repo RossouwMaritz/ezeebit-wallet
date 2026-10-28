@@ -25,3 +25,23 @@ accepted, changed or rejected what it produced.
   current state instead of a stored copy.
 - **Changed: Java version.** I asked for the latest release (27); the AI pushed back to 25 LTS
   because of tooling lag and reviewer setup. Accepted.
+
+## Building
+
+I had the AI work one plan step at a time, run the full test suite on real MySQL after each step, and
+tell me where the code differed from the plan before I committed it.
+
+- **Accepted: early payout results.** The AI noticed that an asynchronous rail can report a result
+  before we mark the withdrawal as submitted, and allowed `REQUESTED → SUCCEEDED/FAILED` with a
+  conditional "mark submitted" update. This was not in the plan.
+- **Accepted: replay instead of `QUOTE_USED`.** The plan said both "conversions dedupe on the quote
+  id" and "a reused quote is an error". The AI pointed out the contradiction and chose replay, which
+  matches deposits and withdrawals and helps a client that lost the response.
+- **Accepted: a timezone fix.** While testing quote expiry, the AI found that every timestamp read
+  from MySQL was 2 hours off when the JVM is not on UTC, including the existing entries endpoint. It
+  pinned the JDBC session to UTC and showed the test failing without the fix.
+- **Reviewed: the FX margin.** I asked whether we add a margin on the rate. It is a single 50 bps
+  spread plus rounding down; I kept it as is and had the limits (one spread for every pair, no
+  separate revenue account) written up in SOLUTION.md instead of built.
+- **Checked against the running app:** I had the AI run the README's curl examples against the real
+  app, not just the tests, before the docs went in.
