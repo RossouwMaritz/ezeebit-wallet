@@ -20,11 +20,14 @@ CREATE TABLE account_balance (
 );
 
 -- (type, reference) is unique so the same business event can never be booked twice.
+-- public_id is the random id the API shows (deposits return theirs); id never leaves the service.
 CREATE TABLE journal_entry (
     id         BIGINT AUTO_INCREMENT PRIMARY KEY,
+    public_id  CHAR(36)     NOT NULL,
     type       VARCHAR(32)  NOT NULL,
     reference  VARCHAR(128) NOT NULL,
     created_at TIMESTAMP(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+    UNIQUE KEY uq_entry_public_id (public_id),
     UNIQUE KEY uq_entry (type, reference)
 );
 
