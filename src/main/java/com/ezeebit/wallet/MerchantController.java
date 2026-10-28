@@ -2,6 +2,11 @@ package com.ezeebit.wallet;
 
 import java.util.List;
 
+import com.ezeebit.wallet.conversion.ConversionService;
+import com.ezeebit.wallet.conversion.ConversionService.Conversion;
+import com.ezeebit.wallet.conversion.ConversionService.ConversionRequest;
+import com.ezeebit.wallet.conversion.ConversionService.Quote;
+import com.ezeebit.wallet.conversion.ConversionService.QuoteRequest;
 import com.ezeebit.wallet.deposit.DepositService;
 import com.ezeebit.wallet.deposit.DepositService.Deposit;
 import com.ezeebit.wallet.deposit.DepositService.DepositRequest;
@@ -40,10 +45,14 @@ class MerchantController {
 
 	private final WithdrawalService withdrawals;
 
-	MerchantController(DepositService deposits, LedgerService ledger, WithdrawalService withdrawals) {
+	private final ConversionService conversions;
+
+	MerchantController(DepositService deposits, LedgerService ledger, WithdrawalService withdrawals,
+			ConversionService conversions) {
 		this.deposits = deposits;
 		this.ledger = ledger;
 		this.withdrawals = withdrawals;
+		this.conversions = conversions;
 	}
 
 	@PostMapping("/deposits")
@@ -75,6 +84,19 @@ class MerchantController {
 	@GetMapping("/withdrawals/{withdrawalId}")
 	Withdrawal withdrawal(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @PathVariable long withdrawalId) {
 		return withdrawals.find(merchantId, withdrawalId).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+	}
+
+	@PostMapping("/quotes")
+	@ResponseStatus(HttpStatus.CREATED)
+	Quote quote(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId, @Valid @RequestBody QuoteRequest request) {
+		return conversions.quote(merchantId, request);
+	}
+
+	@PostMapping("/conversions")
+	@ResponseStatus(HttpStatus.CREATED)
+	Conversion convert(@PathVariable @Pattern(regexp = MERCHANT_ID) String merchantId,
+			@Valid @RequestBody ConversionRequest request) {
+		return conversions.convert(merchantId, request);
 	}
 
 }
