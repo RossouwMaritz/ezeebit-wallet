@@ -1,8 +1,10 @@
 # Ezeebit wallet service
 
 This is my take on the service that holds, converts and moves merchants' money. I built tasks 1, 2
-and 3 from the brief: hold balances, convert between currencies, and withdraw. Tasks 4, 5 and 6 aren't
-built, but I've described how they'd slot in.
+and 3 from the brief: hold balances, convert between currencies, and withdraw. I started there because
+the other tasks build on them. Crypto payments (task 4) are deposits that aren't final yet,
+auto-settlement (task 5) is a conversion the system starts, and payout routing (task 6) sits behind the
+withdrawal's rail. Tasks 4, 5 and 6 aren't built, but I've described how they'd slot in.
 
 ## Overview
 
@@ -165,7 +167,7 @@ sequenceDiagram
     participant DB as MySQL
     participant R as Payout rail
     M->>W: POST /withdrawals, Idempotency-Key: k
-    W->>DB: BEGIN; insert withdrawal (REQUESTED); post HOLD; COMMIT
+    W->>DB: BEGIN#59; insert withdrawal (REQUESTED)#59; post HOLD#59; COMMIT
     Note over W,DB: not enough money: 422, nothing written, key can be reused
     W->>R: submit (our withdrawal id is the rail's idempotency key)
     alt accepted
@@ -177,7 +179,7 @@ sequenceDiagram
     end
     W-->>M: 202 + current state
     R-->>W: later: onPayoutResult(id, succeeded)
-    W->>DB: lock row; if not final: post PAYOUT or RELEASE, SUCCEEDED or FAILED
+    W->>DB: lock row#59; if not final: post PAYOUT or RELEASE, SUCCEEDED or FAILED
 ```
 
 ```mermaid
@@ -193,32 +195,21 @@ stateDiagram-v2
     UNKNOWN --> FAILED: result failed (release)
 ```
 
-States only move forward. The first final result wins, and repeats change nothing. The edges straight
-from `REQUESTED` to a final state are there because an async rail can answer before our "mark as
-submitted" update runs. That update only applies if the withdrawal is still `REQUESTED`, so it can't
-drag a finished withdrawal backwards.
+States only move forward, and the first final result wins. An async rail can answer before we mark the
+withdrawal `SUBMITTED`, hence the edges straight from `REQUESTED`. That update only applies while it's
+still `REQUESTED`, so it can't undo a result.
 
-The destination has to fit the currency. Fiat goes to `{type: BANK, accountNumber, bankCode}` and
-stablecoins go to `{type: CHAIN, network, address}`. Anything else is a 400 `INVALID_DESTINATION`.
+Fiat goes to `{type: BANK, accountNumber, bankCode}`, stablecoins to `{type: CHAIN, network, address}`.
+Anything else is a 400 `INVALID_DESTINATION`.
 
-A withdrawal's id is a random UUID, not the database's auto-increment number. It's what the API
-returns, what the audit trail uses as the reference, and what we send the rail as its idempotency
-key. A counting number would be a problem in three ways:
+Every id the API shows is a random UUID: withdrawals, quotes and ledger entries. The withdrawal id is
+also the rail's idempotency key. An auto-increment id could collide at the rail after a database
+rebuild, leaks our volume, and is guessable. It stays internal as the primary key, because InnoDB
+inserts sequential keys faster.
 
-1. **It could collide at the rail.** If our database were ever rebuilt, or two environments shared a
-   rail sandbox, a new withdrawal 1 would look like the old one, and the rail could drop a real payout
-   as a duplicate.
-2. **It leaks volume.** Two withdrawals a day apart would tell anyone how many we processed in between.
-3. **It's guessable.** Lookups are scoped to the merchant, so guessing returns a 404, but a random id
-   means one missed check doesn't expose anything.
-
-The auto-increment id stays as the primary key, because InnoDB inserts sequential keys faster.
-
-The same goes for the rest of the API: no database number is ever shown. Quotes have random ids
-too, and so does every ledger entry. A deposit returns its entry's random id as `id`, so we can add
-`GET /deposits/{id}` later without changing the API. In the audit trail, entries are labelled by their
-type and reference, which are unique together: a deposit by the reference the merchant sent, a
-conversion by its quote id, and a hold, payout or release by its withdrawal id.
+A deposit returns its ledger entry's id, so `GET /deposits/{id}` can come later without an API change.
+Audit entries are keyed by type plus reference: the merchant's reference for deposits, the quote id
+for conversions, and the withdrawal id for holds, payouts and releases.
 
 ## Conversions
 
@@ -234,7 +225,7 @@ sequenceDiagram
     W->>DB: save quote: rate less 50 bps, buy amount rounded down, expires in 30s
     W-->>M: 201 {id, buyAmount 54.725, rate, expiresAt}
     M->>W: POST /conversions {quoteId}
-    W->>DB: BEGIN; lock quote row
+    W->>DB: BEGIN#59; lock quote row
     alt already executed
         W-->>M: 201, same conversion
     else expired
@@ -271,29 +262,6 @@ Errors come back as `application/problem+json` with a `code` field.
 | `CURRENCY_MISMATCH` | 400 | A posting in the wrong currency, or converting a currency to itself. |
 | `INVALID_AMOUNT` | 400 | Zero, too many decimals, or too large. |
 | `INVALID_DESTINATION` | 400 | The destination doesn't fit the currency. |
-
-## What goes wrong, and what handles it
-
-| What goes wrong | What happens | What handles it |
-|---|---|---|
-| The dashboard sends the same deposit twice, or ten at once | One entry, every response is the same deposit | Unique `(type, reference)` on `journal_entry` |
-| The same withdrawal is sent twice, or at the same time | One hold, one rail submit, same response | Unique `(merchant_id, idempotency_key)` |
-| Same key, different amount or destination | 409, nothing moves | The request is compared on replay |
-| 50 withdrawals at once against a balance that covers 10 | Exactly 10 go through, 40 get 422 | The conditional debit |
-| A withdrawal bigger than the balance | 422, no withdrawal saved, key can be retried | The hold rolls back with the row |
-| The rail times out | `UNKNOWN`, money stays held | Rule 4 in the overview |
-| The rail refuses outright | `FAILED`, money back in available straight away | `PayoutRail.Rejected` |
-| The rail sends its result twice | The second one changes nothing | Row lock and final-state check, plus unique `(PAYOUT, id)` as a backstop |
-| The rail says "failed" after it said "succeeded" | Nothing changes, logged for a human | Final states are final |
-| The result arrives before we mark the withdrawal submitted | Settles normally | Results are accepted from `REQUESTED` |
-| The app dies after the hold but before calling the rail | Stuck in `REQUESTED`, money held but not lost | Not handled yet, needs a sweeper (see below) |
-| The rate feed errors or is slow | 503, no quote | We fail closed |
-| The feed rate is older than 10 seconds | 503, no quote | Age check |
-| The feed rate jumps more than 2% | 503, and the outlier isn't trusted as the new normal | Last-good-rate check |
-| The market moves between quote and execution | The merchant gets the quoted rate within 30s, then 422 | Expiry and margin |
-| A merchant converts more than they hold | 422 `INSUFFICIENT_FUNDS`, quote still usable | The conditional debit |
-| The house runs out of a currency | 422 `INSUFFICIENT_LIQUIDITY`, nothing moves | `FX` accounts can't go negative |
-| The same quote is executed twice, or ten at once | One conversion, everyone gets it back | Quote row lock |
 
 ## How tasks 4, 5 and 6 would fit
 
@@ -403,42 +371,3 @@ comparison.
 | `WithdrawalApiTests` | 50 racing withdrawals never overspend. A successful payout settles once, however often the result arrives. A failed payout releases the hold once. A rail refusal releases straight away. A timeout keeps the money held until the result arrives. A repeat only reaches the rail once. A short balance is rejected and the key can be retried. Bad destinations and amounts move nothing. |
 | `ConversionApiTests` | A conversion moves both sides and the house stock once, and repeats return it, even after expiry. 10 racing executions of one quote book once. Expired quotes are rejected. Stale, outlying and failed rates give no quote. Converting too much is rejected and the quote stays usable. A house shortfall moves nothing. |
 | `FakePayoutRailTests` | With a delay set, the fake rail reports an accepted payout as paid after that delay, not before. It reports nothing for a refused payout, or when no delay is set. |
-
-## How I used AI
-
-I used Claude Code to plan the design with me, then to write the code and docs one step at a time. It
-ran the full test suite after each step and told me where the code had drifted from the plan before I
-committed. These are the places where I changed or overrode what it suggested, and the bigger
-suggestions I accepted.
-
-What I changed or rejected:
-
-- **No recovery sweeper in code.** It proposed a scheduled job to resubmit stuck withdrawals. Without
-  one, money can get stuck in `HELD` but is never lost or paid twice, so I kept it as a write-up.
-- **No webhook endpoint.** It proposed an HTTP endpoint for rail results. The tests call the service
-  directly, so the endpoint wouldn't prove anything extra.
-- **The house FX position can't go negative.** It let the platform FX account go negative as "the
-  position to hedge". I wanted it to stay at zero or above, so conversions can fail on liquidity and the
-  house stock is seeded.
-- **No `currency` table and no `allow_negative` column.** It planned both. I had currencies as a Java
-  enum, and "can go negative" worked out from the account type, so each rule lives in one place.
-- **No generic idempotency table.** It planned and built one that stored every response. I questioned
-  whether we needed it. We kept the standard `Idempotency-Key` header for withdrawals but store it on
-  the withdrawal row, and deposits and conversions dedupe on their natural keys.
-- **Java version.** I asked for the newest release (27). It pushed back to 25 LTS because of tooling
-  lag and reviewers' setups, and I agreed.
-
-What I accepted:
-
-- **The core design:** a double-entry ledger, the idempotency key written in the same transaction as
-  the work, the conditional debit, and real MySQL in tests instead of H2.
-- **Early payout results.** It noticed an async rail can answer before we mark a withdrawal as
-  submitted, and allowed for that. This wasn't in the plan.
-- **Repeating a quote returns the conversion.** The plan said both "conversions dedupe on the quote
-  id" and "a reused quote is an error". It spotted the contradiction and went with returning the
-  conversion, which matches deposits and withdrawals.
-- **A time zone fix.** While testing quote expiry it found that every timestamp from MySQL was 2 hours
-  off when the JVM isn't on UTC, including the existing entries endpoint. It pinned the database
-  session to UTC and showed the test failing without the fix.
-- **One FX margin.** I asked whether we add a margin on the rate. It's a single 50 bps plus rounding
-  down. I kept it simple and wrote up the limits instead of building more.
