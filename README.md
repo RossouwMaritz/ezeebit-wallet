@@ -65,7 +65,7 @@ You need JDK 25 or newer, and Docker. Tests and local runs start MySQL 8.4 in a 
 The curl examples also use [jq](https://jqlang.org) to pick the quote id out of the response.
 
 ```bash
-./mvnw test                   # 28 tests, all against real MySQL
+./mvnw test                   # 30 tests, against real MySQL
 ./mvnw spring-boot:test-run   # the app on http://localhost:8089, with a throwaway database
 ```
 
@@ -90,15 +90,19 @@ WITHDRAWAL_ID=$(curl -s -X POST localhost:8089/merchants/m-1/withdrawals -H 'Con
   -d '{"currency": "ZAR", "amount": 100,
        "destination": {"type": "BANK", "accountNumber": "62000000001", "bankCode": "250655"}}' | jq -r .id)
 
+# SUBMITTED with the money held. Ask again after 30 seconds and it's SUCCEEDED (see below).
 curl -s localhost:8089/merchants/m-1/withdrawals/$WITHDRAWAL_ID
+curl -s localhost:8089/merchants/m-1/balances
 
 # Every posting on the merchant's ZAR accounts, newest first.
 curl -s localhost:8089/merchants/m-1/accounts/ZAR/entries
 ```
 
-The rate feed and payout rail are in-process fakes. Locally the fake rail accepts every withdrawal but
-never reports back (there's no webhook endpoint), so withdrawals stay `SUBMITTED` with the money held.
-The tests drive the results directly.
+The rate feed and payout rail are in-process fakes. Locally the fake rail accepts every withdrawal and
+reports it as paid 30 seconds later, the way a real rail's webhook would. The withdrawal then moves to
+`SUCCEEDED`, the held money goes out, and a `PAYOUT` entry appears. The delay is
+`wallet.fake-rail.settle-after` in `src/test/resources/application-local.properties`. The tests don't
+use it: they report results themselves, to cover failures and repeats too.
 
 ## The ledger
 
@@ -388,8 +392,9 @@ Most important first:
 
 ## Tests
 
-All 28 tests run against real MySQL 8.4 in Docker. I didn't use an in-memory database because the
-guarantees depend on MySQL's own locking, unique indexes and text comparison.
+There are 30 tests. Everything that touches money runs against real MySQL 8.4 in Docker. I didn't use
+an in-memory database because the guarantees depend on MySQL's own locking, unique indexes and text
+comparison.
 
 | Test class | What it proves |
 |---|---|
@@ -397,6 +402,7 @@ guarantees depend on MySQL's own locking, unique indexes and text comparison.
 | `DepositApiTests` | A repeated deposit is booked once, including 10 at the same time. Same reference with a different amount is a 409. References that differ only in case are separate deposits. Bad input moves nothing. |
 | `WithdrawalApiTests` | 50 racing withdrawals never overspend. A successful payout settles once, however often the result arrives. A failed payout releases the hold once. A rail refusal releases straight away. A timeout keeps the money held until the result arrives. A repeat only reaches the rail once. A short balance is rejected and the key can be retried. Bad destinations and amounts move nothing. |
 | `ConversionApiTests` | A conversion moves both sides and the house stock once, and repeats return it, even after expiry. 10 racing executions of one quote book once. Expired quotes are rejected. Stale, outlying and failed rates give no quote. Converting too much is rejected and the quote stays usable. A house shortfall moves nothing. |
+| `FakePayoutRailTests` | With a delay set, the fake rail reports an accepted payout as paid after that delay, not before. It reports nothing for a refused payout, or when no delay is set. |
 
 ## How I used AI
 
