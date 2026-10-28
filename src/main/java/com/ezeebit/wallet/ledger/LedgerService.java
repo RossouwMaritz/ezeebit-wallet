@@ -7,6 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.ezeebit.wallet.Currency;
 import com.ezeebit.wallet.ErrorCode;
@@ -97,7 +98,9 @@ public class LedgerService {
 		});
 
 		GeneratedKeyHolder key = new GeneratedKeyHolder();
-		jdbc.sql("INSERT INTO journal_entry (type, reference) VALUES (?, ?)").params(type, reference).update(key);
+		jdbc.sql("INSERT INTO journal_entry (public_id, type, reference) VALUES (?, ?, ?)")
+			.params(UUID.randomUUID().toString(), type, reference)
+			.update(key);
 		long entryId = key.getKey().longValue();
 		for (Posting p : postings) {
 			jdbc.sql("INSERT INTO posting (entry_id, account_id, amount) VALUES (?, ?, ?)")
@@ -119,8 +122,8 @@ public class LedgerService {
 	public record Balance(Currency currency, BigDecimal available, BigDecimal held) {
 	}
 
-	public record Entry(long entryId, String type, String reference, AccountType account, BigDecimal amount,
-			Instant createdAt) {
+	/** One posting, labelled by its entry's (type, reference), which is unique and safe to show merchants. */
+	public record Entry(String type, String reference, AccountType account, BigDecimal amount, Instant createdAt) {
 	}
 
 	/** Available and held per currency the owner has used. */
@@ -146,7 +149,7 @@ public class LedgerService {
 	public List<Entry> entries(String owner, Currency currency) {
 		// shortcut: newest 100 only, add a cursor (?before=<posting id>) when merchants need full history.
 		return jdbc.sql("""
-				SELECT e.id, e.type, e.reference, a.type, p.amount, e.created_at
+				SELECT e.type, e.reference, a.type, p.amount, e.created_at
 				FROM posting p
 				JOIN account a ON a.id = p.account_id
 				JOIN journal_entry e ON e.id = p.entry_id
@@ -154,9 +157,8 @@ public class LedgerService {
 				ORDER BY p.id DESC
 				LIMIT 100""")
 			.params(owner, currency.name())
-			.query((rs, i) -> new Entry(rs.getLong(1), rs.getString(2), rs.getString(3),
-					AccountType.valueOf(rs.getString(4)), rs.getBigDecimal(5).setScale(currency.scale),
-					rs.getTimestamp(6).toInstant()))
+			.query((rs, i) -> new Entry(rs.getString(1), rs.getString(2), AccountType.valueOf(rs.getString(3)),
+					rs.getBigDecimal(4).setScale(currency.scale), rs.getTimestamp(5).toInstant()))
 			.list();
 	}
 

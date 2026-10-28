@@ -8,6 +8,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 
 import org.springframework.beans.factory.annotation.Autowired;
@@ -44,11 +45,14 @@ class DepositApiTests {
 	void replayedDepositIsBookedOnce() throws Exception {
 		String first = deposit("ZAR", "100.5").andExpect(status().isCreated())
 			.andExpect(jsonPath("$.amount").value(100.50))
+			.andExpect(jsonPath("$.entryId").doesNotExist())
 			.andReturn().getResponse().getContentAsString();
 		String replay = deposit("ZAR", "100.50").andExpect(status().isCreated())
 			.andReturn().getResponse().getContentAsString();
 
+		// Same response, same random id.
 		assertThat(replay).isEqualTo(first);
+		assertThat(UUID.fromString(JsonPath.read(first, "$.id"))).isNotNull();
 		assertThat(depositEntries()).isEqualTo(1);
 		mvc.perform(get("/merchants/{id}/balances", merchant))
 			.andExpect(status().isOk())
@@ -59,6 +63,8 @@ class DepositApiTests {
 			.andExpect(status().isOk())
 			.andExpect(jsonPath("$.length()").value(1))
 			.andExpect(jsonPath("$[0].type").value("DEPOSIT"))
+			.andExpect(jsonPath("$[0].reference").value(merchant + "/" + reference))
+			.andExpect(jsonPath("$[0].entryId").doesNotExist())
 			.andExpect(jsonPath("$[0].account").value("AVAILABLE"))
 			.andExpect(jsonPath("$[0].amount").value(100.50));
 	}

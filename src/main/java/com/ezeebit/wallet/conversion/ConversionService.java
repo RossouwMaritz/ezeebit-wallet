@@ -59,7 +59,7 @@ public class ConversionService {
 	public record ConversionRequest(@NotBlank @Size(max = 36) String quoteId) {
 	}
 
-	public record Conversion(String quoteId, long entryId, Currency sellCurrency, BigDecimal sellAmount,
+	public record Conversion(String quoteId, Currency sellCurrency, BigDecimal sellAmount,
 			Currency buyCurrency, BigDecimal buyAmount, BigDecimal rate) {
 	}
 
@@ -124,7 +124,7 @@ public class ConversionService {
 			QuoteRow row = find(merchantId, request.quoteId(), true);
 			Quote q = row.quote();
 			if (row.entryId() != null) {
-				return conversion(q, row.entryId());
+				return conversion(q);
 			}
 			if (row.expired()) {
 				throw new WalletException(ErrorCode.QUOTE_EXPIRED, "Quote " + q.id() + " expired at " + q.expiresAt());
@@ -150,7 +150,7 @@ public class ConversionService {
 						"Cannot fill " + q.buyAmount().toPlainString() + " " + q.buyCurrency() + " right now");
 			}
 			jdbc.sql("UPDATE quote SET entry_id = ? WHERE id = ?").params(entryId, q.id()).update();
-			return conversion(q, entryId);
+			return conversion(q);
 		});
 	}
 
@@ -203,8 +203,8 @@ public class ConversionService {
 		return new QuoteRow(quote, rs.getObject("entry_id", Long.class), rs.getBoolean("expired"));
 	}
 
-	private static Conversion conversion(Quote q, long entryId) {
-		return new Conversion(q.id(), entryId, q.sellCurrency(), q.sellAmount(), q.buyCurrency(), q.buyAmount(),
+	private static Conversion conversion(Quote q) {
+		return new Conversion(q.id(), q.sellCurrency(), q.sellAmount(), q.buyCurrency(), q.buyAmount(),
 				q.rate());
 	}
 

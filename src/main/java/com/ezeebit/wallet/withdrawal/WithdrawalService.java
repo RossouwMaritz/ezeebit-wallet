@@ -5,6 +5,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 
 import com.ezeebit.wallet.Currency;
 import com.ezeebit.wallet.ErrorCode;
@@ -21,7 +22,6 @@ import org.slf4j.LoggerFactory;
 
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -58,12 +58,13 @@ public class WithdrawalService {
 			@NotNull @Valid Destination destination) {
 	}
 
-	public record Withdrawal(long id, String merchantId, Currency currency, BigDecimal amount, Destination destination,
+	/** {@code id} is the public id, never the database's auto-increment one. */
+	public record Withdrawal(String id, String merchantId, Currency currency, BigDecimal amount, Destination destination,
 			State state) {
 	}
 
 	private static final String COLUMNS = """
-			id, merchant_id, currency, amount, destination_type, account_number, bank_code, network, address, state""";
+			public_id, merchant_id, currency, amount, destination_type, account_number, bank_code, network, address, state""";
 
 	private final LedgerService ledger;
 
@@ -83,7 +84,7 @@ public class WithdrawalService {
 	public Withdrawal withdraw(String merchantId, String idempotencyKey, WithdrawalRequest request) {
 		requireValidDestination(request.currency(), request.destination());
 		LedgerService.requireValidAmount(request.currency(), request.amount());
-		long id;
+		String id;
 		try {
 			id = tx.execute(status -> hold(merchantId, idempotencyKey, request));
 		}
@@ -96,7 +97,7 @@ public class WithdrawalService {
 		return find(id).orElseThrow();
 	}
 
-	public Optional<Withdrawal> find(String merchantId, long id) {
+	public Optional<Withdrawal> find(String merchantId, String id) {
 		return find(id).filter(w -> w.merchantId().equals(merchantId));
 	}
 
@@ -104,9 +105,9 @@ public class WithdrawalService {
 	 * The rail's final word on a payout. Safe to call any number of times, in any order relative to
 	 * submit: the first result wins, later ones change nothing.
 	 */
-	public void onPayoutResult(long withdrawalId, boolean succeeded) {
+	public void onPayoutResult(String withdrawalId, boolean succeeded) {
 		tx.executeWithoutResult(status -> {
-			Withdrawal w = jdbc.sql("SELECT " + COLUMNS + " FROM withdrawal WHERE id = ? FOR UPDATE")
+			Withdrawal w = jdbc.sql("SELECT " + COLUMNS + " FROM withdrawal WHERE public_id = ? FOR UPDATE")
 				.param(withdrawalId)
 				.query(WithdrawalService::map)
 				.optional()
@@ -122,30 +123,29 @@ public class WithdrawalService {
 			long held = ledger.account(w.merchantId(), AccountType.HELD, currency);
 			long to = succeeded ? ledger.account(LedgerService.PLATFORM, AccountType.PAYOUTS_OUT, currency)
 					: ledger.account(w.merchantId(), AccountType.AVAILABLE, currency);
-			ledger.post(succeeded ? "PAYOUT" : "RELEASE", String.valueOf(w.id()),
+			ledger.post(succeeded ? "PAYOUT" : "RELEASE", w.id(),
 					List.of(new Posting(held, currency, w.amount().negate()), new Posting(to, currency, w.amount())));
-			jdbc.sql("UPDATE withdrawal SET state = ? WHERE id = ?")
+			jdbc.sql("UPDATE withdrawal SET state = ? WHERE public_id = ?")
 				.params((succeeded ? State.SUCCEEDED : State.FAILED).name(), w.id())
 				.update();
 		});
 	}
 
-	private long hold(String merchantId, String idempotencyKey, WithdrawalRequest request) {
+	private String hold(String merchantId, String idempotencyKey, WithdrawalRequest request) {
 		Currency currency = request.currency();
 		Destination d = request.destination();
-		GeneratedKeyHolder key = new GeneratedKeyHolder();
+		String id = UUID.randomUUID().toString();
 		jdbc.sql("""
-				INSERT INTO withdrawal (merchant_id, idempotency_key, currency, amount, destination_type,
+				INSERT INTO withdrawal (public_id, merchant_id, idempotency_key, currency, amount, destination_type,
 				                        account_number, bank_code, network, address, state)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")
-			.params(merchantId, idempotencyKey, currency.name(), request.amount(), d.type().name(), d.accountNumber(),
-					d.bankCode(), d.network(), d.address(), State.REQUESTED.name())
-			.update(key);
-		long id = key.getKey().longValue();
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""")
+			.params(id, merchantId, idempotencyKey, currency.name(), request.amount(), d.type().name(),
+					d.accountNumber(), d.bankCode(), d.network(), d.address(), State.REQUESTED.name())
+			.update();
 		long available = ledger.account(merchantId, AccountType.AVAILABLE, currency);
 		long held = ledger.account(merchantId, AccountType.HELD, currency);
 		// Throws InsufficientFundsException if available is short, which rolls back the withdrawal row too.
-		ledger.post("HOLD", String.valueOf(id), List.of(new Posting(available, currency, request.amount().negate()),
+		ledger.post("HOLD", id, List.of(new Posting(available, currency, request.amount().negate()),
 				new Posting(held, currency, request.amount())));
 		return id;
 	}
@@ -165,7 +165,7 @@ public class WithdrawalService {
 			next = State.UNKNOWN;
 		}
 		// Conditional: the rail's result may already have arrived and moved it to a final state.
-		jdbc.sql("UPDATE withdrawal SET state = ? WHERE id = ? AND state = ?")
+		jdbc.sql("UPDATE withdrawal SET state = ? WHERE public_id = ? AND state = ?")
 			.params(next.name(), w.id(), State.REQUESTED.name())
 			.update();
 	}
@@ -183,8 +183,8 @@ public class WithdrawalService {
 		return w;
 	}
 
-	private Optional<Withdrawal> find(long id) {
-		return jdbc.sql("SELECT " + COLUMNS + " FROM withdrawal WHERE id = ?")
+	private Optional<Withdrawal> find(String id) {
+		return jdbc.sql("SELECT " + COLUMNS + " FROM withdrawal WHERE public_id = ?")
 			.param(id)
 			.query(WithdrawalService::map)
 			.optional();
@@ -195,7 +195,7 @@ public class WithdrawalService {
 		Destination destination = new Destination(Destination.Type.valueOf(rs.getString("destination_type")),
 				rs.getString("account_number"), rs.getString("bank_code"), rs.getString("network"),
 				rs.getString("address"));
-		return new Withdrawal(rs.getLong("id"), rs.getString("merchant_id"), currency,
+		return new Withdrawal(rs.getString("public_id"), rs.getString("merchant_id"), currency,
 				rs.getBigDecimal("amount").setScale(currency.scale), destination, State.valueOf(rs.getString("state")));
 	}
 

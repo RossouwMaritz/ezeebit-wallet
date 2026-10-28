@@ -8,7 +8,7 @@ SELECT 'platform', t.type, s.currency
 FROM fx_stock s
 CROSS JOIN (SELECT 'FX' AS type UNION ALL SELECT 'TREASURY') t;
 
-INSERT INTO journal_entry (type, reference) VALUES ('SEED', 'fx-stock');
+INSERT INTO journal_entry (public_id, type, reference) VALUES (UUID(), 'SEED', 'fx-stock');
 SET @entry = LAST_INSERT_ID();
 
 INSERT INTO posting (entry_id, account_id, amount)
